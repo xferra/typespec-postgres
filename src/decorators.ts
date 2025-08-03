@@ -97,15 +97,11 @@ function canTypeBeReference(type: Type): boolean {
       return false;
     case "UnionVariant":
       return false; // FIXME: test this in a test!
-    case "Function":
-      return false; // FIXME: test this in a test!
     case "Decorator":
       return false; // FIXME: test this in a test!
     case "FunctionParameter":
       return false; // FIXME: test this in a test!
-    case "Object":
-      return false; // FIXME: test this in a test!
-    case "Projection":
-      return false; // FIXME: test this in a test!
   }
+
+  return false;
 }

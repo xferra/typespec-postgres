@@ -28,8 +28,6 @@ import {
   navigateTypesInNamespace,
   NewLine,
   Program,
-  ProjectionApplication,
-  projectProgram,
   resolvePath,
   Scalar,
   Service,
@@ -40,7 +38,6 @@ import {
 } from "@typespec/compiler";
 import { createMetadataInfo, MetadataInfo, Visibility, } from "@typespec/http";
 import { getExternalDocs, isReadonlyProperty, } from "@typespec/openapi";
-import { buildVersionProjections } from "@typespec/versioning";
 import { FileType, NewLineType, reportDiagnostic, SQLEmitterOptions } from "./lib.js";
 
 import {
@@ -141,32 +138,10 @@ class SQLEmitter {
       services.push({ type: this.program.getGlobalNamespaceType() });
     }
     for (const service of services) {
-      const commonProjections: ProjectionApplication[] = [
-        {
-          projectionName: "target",
-          arguments: ["json"],
-        },
-      ];
-      const originalProgram = this.program;
-
-      const versions = buildVersionProjections(this.program, service.type);
-      for (const record of versions) {
-        const projectedProgram = (this.program = projectProgram(originalProgram, [
-          ...commonProjections,
-          ...record.projections,
-        ]));
-        const projectedServiceNs: Namespace = projectedProgram.projector.projectedTypes.get(
-          service.type
-        ) as Namespace;
-
-        await this.emitSQLFromVersion(
-          projectedServiceNs === projectedProgram.getGlobalNamespaceType()
-            ? { type: projectedProgram.getGlobalNamespaceType() }
-            : getService(this.program, projectedServiceNs)!,
-          services.length > 1,
-          record.version
-        );
-      }
+      await this.emitSQLFromVersion(
+        service,
+        services.length > 1
+      );
     }
   }
 
@@ -225,8 +200,6 @@ class SQLEmitter {
         return false;
       case "Decorator":
         return false;
-      case "Object":
-        return false;
       case "ModelProperty":
         return this.canTypeBeColumn(type.type);
       case "Union":
@@ -238,11 +211,11 @@ class SQLEmitter {
       case "Interface":
       case "Tuple":
       case "UnionVariant":
-      case "Function":
       case "FunctionParameter":
-      case "Projection":
         return false;
     }
+
+    return false;
   }
 
   getReferencesDecorator(type: ModelProperty): DecoratorApplication | undefined {
@@ -831,7 +804,11 @@ class SQLEmitter {
       }
       if (registryAnswer.registered) {
         this.applyDocs(e, sqlEnum);
-        const type = this.enumMemberType(e.members.values().next().value);
+        const firstMember = e.members.values().next().value;
+        if (!firstMember) {
+          return; // No members in enum
+        }
+        const type = this.enumMemberType(firstMember);
         if (type === undefined) { // break early because the type is not allowed
           return;
         }
@@ -927,9 +904,11 @@ class SQLEmitter {
 
       const baseModel = model.baseModel;
 
-      let properties = model.properties.values();
+      let properties: IterableIterator<ModelProperty>;
       if (baseModel) {
         properties = walkPropertiesInherited(model);
+      } else {
+        properties = model.properties.values();
       }
 
       for (const prop of properties) {
@@ -1188,8 +1167,8 @@ class SQLEmitter {
   }
 
   setDefaultValues(prop: ModelProperty, column: SQLTableColumn): void {
-    if (prop.default) {
-      const defaultValue = this.getDefaultValue(prop.default);
+    if (prop.defaultValue) {
+      const defaultValue = this.getDefaultValue(prop.type);
       if (defaultValue) {
         const defaultConstraint: DefaultConstraint = new DefaultConstraint(defaultValue);
         column.constraints.push(defaultConstraint);
